@@ -4,17 +4,17 @@ all: test
 .PHONY: test
 test:
 	go test -race -cover ./...
-	@test -n $(shell go fix -diff ./...) || (echo "go fixes required" && exit 1)
 
 .PHONY: lint
 lint:
-	@which golangci-lint > /dev/null || echo "golangci-lint required for `make lint`"
-	@golangci-lint version
-	@golangci-lint run
+	$(if $(shell go fix -diff ./...),$(error go fixes required; run 'go fix ./...'))
+	$(if $(shell which golangci-lint),,$(error golangci-lint required for make lint))
+	golangci-lint version
+	golangci-lint run
 
 .PHONY: godoc
 godoc:
-	@which pkgsite > /dev/null || echo "pkgsite required for `make godoc`"
+	$(if $(shell which pkgsite),,$(error pkgsite required for make godoc))
 	pkgsite -open
 
 .PHONY: update

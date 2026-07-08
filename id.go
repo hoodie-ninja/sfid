@@ -1,81 +1,103 @@
 package sfid
 
-import (
-	"bytes"
-	"fmt"
-	"strings"
-	"unicode"
-)
+import "strings"
 
 // ID represents a Salesforce Identifier. IDs can be directly compared for equality using == and are safe
 // for use as map keys.
 type ID struct{ string }
 
-// Parse accepts a 15 or 18-rune Salesforce ID and returns an ID. Ignores leading and trailing whitespace.
-// If the ID is invalid in any way, false is returned with a "zero" ID.
+// Parse accepts 15 or 18-rune Salesforce IDs and returns an ID. Ignores leading and trailing
+// whitespace. If the ID is invalid in any way, false is returned with a "zero" ID.
 func Parse(s string) (ID, bool) {
 	s = strings.TrimSpace(s)
 	if len(s) != 15 && len(s) != 18 {
 		return ID{}, false
 	}
-	if strings.ContainsFunc(s, func(r rune) bool { return !strings.ContainsRune(idRunes, r) }) {
-		return ID{}, false
+	for i := range len(s) {
+		if !base62(s[i]) {
+			return ID{}, false
+		}
 	}
 	if len(s) == 15 {
-		fmt.Println("case mask:", caseMask(s))
-		return ID{s + caseMask(s)}, true
+		return ID{s}, true
 	}
-	// len(s) == 18
-	return ID{applyMask(s)}, true
+	// len(s) == 18: the suffix is authoritative for the body's casing (see applyMask).
+	body, ok := applyMask(s)
+	if !ok {
+		return ID{}, false
+	}
+	return ID{body}, true
 }
 
-// CaseSafe returns the case-insensitive 18-rune "default" format ID.
-func (id ID) CaseSafe() string { return id.string }
-
-// String implements fmt.Stringer. Returns CaseSafe().
-func (id ID) String() string { return id.string }
-
-// ID() returns the case-sensitive 15-rune "internal" format ID.
-func (id ID) ID() string {
+// String returns the case-insensitive 18-rune form.
+func (id ID) String() string {
 	if id.string == "" {
 		return ""
 	}
-	return id.string[:15]
+	var out [18]byte
+	copy(out[:15], id.string)
+	writeMask(out[15:], id.string)
+	return string(out[:])
 }
 
-// helper to generate case mask.
-// only called after clean() on 15-rune input
-func caseMask(s string) string {
-	// s is now 15 runes
-	buf := new(bytes.Buffer)
-	for i := range 3 {
-		mask := 0b00000
-		for j := 4; j >= 0; j-- {
-			r := rune(s[i*5+j]) // +1 starts at the end, -j walks backwards, -1 adjusts position to index
-			if unicode.IsUpper(r) {
-				mask |= 0b1 << uint(j)
-			}
-		}
-		buf.WriteByte(caseRunes[mask])
-	}
-	return buf.String()
+// ID() returns the case-sensitive 15-rune form.
+func (id ID) ID() string { return id.string }
+
+// base62 reports whether c is in the Base-62 alphabet (0-9, A-Z, a-z).
+func base62(c byte) bool {
+	return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z'
 }
 
-// applyMask applies capitalization rules in mask to prior string.
-// only called after clean() on 18-rune input
-func applyMask(s string) string {
-	mask := s[15:]
-	idbuf := new(strings.Builder)
+// suffixIndex returns the position of c in caseRunes, matching letters case-insensitively,
+// or -1 if c is not a valid checksum character (A-Z, 0-5).
+func suffixIndex(c byte) int {
+	switch {
+	case 'A' <= c && c <= 'Z':
+		return int(c - 'A')
+	case 'a' <= c && c <= 'z':
+		return int(c - 'a')
+	case '0' <= c && c <= '5':
+		return int(c-'0') + 26
+	default:
+		return -1
+	}
+}
+
+// writeMask writes the 3-rune capitalization checksum for the 15-rune body s into dst.
+func writeMask(dst []byte, s string) {
 	for i := range 3 {
-		chunk := []rune(s[i*5 : (i+1)*5])
-		maskRune := unicode.ToUpper(rune(mask[i]))
-		chunkMask := strings.IndexRune(caseRunes, maskRune)
-		for j := 4; j >= 0; j-- {
-			if chunkMask>>j&0b1 == 0b1 {
-				chunk[j] = unicode.ToUpper(chunk[j])
+		bits := 0
+		for j := range 5 {
+			if c := s[i*5+j]; 'A' <= c && c <= 'Z' {
+				bits |= 1 << j
 			}
 		}
-		idbuf.WriteString(string(chunk))
+		dst[i] = caseRunes[bits]
 	}
-	return idbuf.String() + strings.ToUpper(string(mask))
+}
+
+// applyMask decodes the case-sensitive 15-rune body of a case-insensitive 18-rune ID.
+// Each suffix rune encodes the capitalization of one 5-rune chunk of the body.
+// Returns false if a suffix rune is outside the checksum alphabet (A-Z, 0-5).
+func applyMask(s string) (string, bool) {
+	var body [15]byte
+	for i := range 3 {
+		bits := suffixIndex(s[15+i])
+		if bits < 0 {
+			return "", false
+		}
+		for j := range 5 {
+			c := s[i*5+j]
+			// only apply case shift for non-digits
+			if c >= 'A' {
+				if bits>>j&1 == 1 {
+					c &^= 0x20
+				} else {
+					c |= 0x20
+				}
+			}
+			body[i*5+j] = c
+		}
+	}
+	return string(body[:]), true
 }

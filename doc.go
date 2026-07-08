@@ -9,6 +9,3 @@ package sfid
 
 // caseRunes is the indexed set of capitalization checksums for the 18-rune format.
 const caseRunes = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
-
-// idRunes is the Base-62 encoding alphabet (0-9, A-Z, a-z) not included in stdlib.
-const idRunes = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
