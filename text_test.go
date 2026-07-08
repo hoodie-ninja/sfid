@@ -9,29 +9,23 @@ import (
 )
 
 func TestMarshalText(t *testing.T) {
-	id, ok := sfid.Parse(testID15)
-	assert.True(t, ok)
-
-	b, err := id.MarshalText()
+	b, err := sfid.MustParse("001A0000006Vm9u").MarshalText()
 	assert.NoError(t, err)
-	assert.Exactly(t, testID18, string(b))
+	assert.Exactly(t, "001A0000006Vm9uIAC", string(b))
 
-	// the zero ID cannot be marshaled.
-	var zero sfid.ID
-	b, err = zero.MarshalText()
-	assert.Error(t, err)
-	assert.Nil(t, b)
+	b, err = sfid.ID{}.MarshalText()
+	assert.NoError(t, err)
+	assert.Exactly(t, "000000000000000AAA", string(b))
 }
 
 func TestUnmarshalText(t *testing.T) {
 	cases := []struct {
-		name  string
-		input string
-		want  string
-		ok    bool
+		name, input, want string
+		ok                bool
 	}{
-		{"15-rune", testID15, testID18, true},
-		{"18-rune", "001a0000006vm9uiac", testID18, true},
+		{"15-rune", "001A0000006Vm9u", "001A0000006Vm9uIAC", true},
+		{"18-rune", "001a0000006vm9uiac", "001A0000006Vm9uIAC", true},
+		{"zero", "000000000000000AAA", "000000000000000AAA", true},
 		{"invalid", "nope", "", false},
 		{"empty", "", "", false},
 	}
@@ -41,7 +35,7 @@ func TestUnmarshalText(t *testing.T) {
 			err := id.UnmarshalText([]byte(tt.input))
 			if !tt.ok {
 				assert.Error(t, err)
-				assert.Exactly(t, "", id.String(), "id must be unchanged on error")
+				assert.Exactly(t, sfid.ID{}, id, "unchanged on error")
 				return
 			}
 			assert.NoError(t, err)
@@ -54,23 +48,29 @@ func TestJSONRoundTrip(t *testing.T) {
 	type record struct {
 		ID sfid.ID `json:"id"`
 	}
+	orig := sfid.MustParse("001A0000006Vm9u")
 
-	original, ok := sfid.Parse(testID15)
-	assert.True(t, ok)
-
-	out, err := json.Marshal(record{ID: original})
+	out, err := json.Marshal(record{ID: orig})
 	assert.NoError(t, err)
-	assert.Exactly(t, `{"id":"`+testID18+`"}`, string(out))
+	assert.Exactly(t, `{"id":"001A0000006Vm9uIAC"}`, string(out))
 
-	var in record
-	assert.NoError(t, json.Unmarshal(out, &in))
-	assert.True(t, original == in.ID)
+	// the 18-, 15-, lowercased, and absent forms all unmarshal to the expected ID
+	for _, tt := range []struct {
+		in   string
+		want sfid.ID
+	}{
+		{`{"id":"001A0000006Vm9uIAC"}`, orig},
+		{`{"id":"001A0000006Vm9u"}`, orig},
+		{`{"id":"001a0000006vm9uiac"}`, orig},
+		{`{}`, sfid.ID{}},
+	} {
+		var r record
+		assert.NoError(t, json.Unmarshal([]byte(tt.in), &r))
+		assert.Exactly(t, tt.want, r.ID)
+	}
 
-	// 15-rune input on the wire parses to the same ID.
-	assert.NoError(t, json.Unmarshal([]byte(`{"id":"`+testID15+`"}`), &in))
-	assert.True(t, original == in.ID)
-
-	// a struct with a zero ID cannot be marshaled.
-	_, err = json.Marshal(record{})
-	assert.Error(t, err)
+	// the zero ID marshals to the canonical zero string
+	out, err = json.Marshal(record{})
+	assert.NoError(t, err)
+	assert.Exactly(t, `{"id":"000000000000000AAA"}`, string(out))
 }

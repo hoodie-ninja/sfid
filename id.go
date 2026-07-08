@@ -1,9 +1,11 @@
 package sfid
 
-import "strings"
+import (
+	"strings"
+)
 
 // ID represents a Salesforce Identifier. IDs can be directly compared for equality using == and are safe
-// for use as map keys.
+// for use as map keys. The zero value renders as "000000000000000AAA".
 type ID struct{ string }
 
 // Parse accepts 15 or 18-rune Salesforce IDs and returns an ID. Ignores leading and trailing
@@ -18,21 +20,36 @@ func Parse(s string) (ID, bool) {
 			return ID{}, false
 		}
 	}
-	if len(s) == 15 {
-		return ID{s}, true
+	body := s
+	if len(s) == 18 {
+		// the suffix is authoritative for the body's casing (see applyMask).
+		var ok bool
+		if body, ok = applyMask(s); !ok {
+			return ID{}, false
+		}
 	}
-	// len(s) == 18: the suffix is authoritative for the body's casing (see applyMask).
-	body, ok := applyMask(s)
-	if !ok {
-		return ID{}, false
+	if body == zeroBody {
+		return ID{}, true // the all-zeros ID normalizes to the zero value
 	}
 	return ID{body}, true
 }
 
-// String returns the case-insensitive 18-rune form.
+// ParseBytes is like [Parse] but accepts a []byte.
+func ParseBytes(b []byte) (ID, bool) { return Parse(string(b)) }
+
+// MustParse panics instead of returning false on Parse errors.
+func MustParse(s string) ID {
+	out, ok := Parse(s)
+	if !ok {
+		panic("failed to parse " + s)
+	}
+	return out
+}
+
+// String returns the case-insensitive 18-rune form. The zero value renders as "000000000000000AAA".
 func (id ID) String() string {
 	if id.string == "" {
-		return ""
+		return zeroString
 	}
 	var out [18]byte
 	copy(out[:15], id.string)
@@ -40,16 +57,19 @@ func (id ID) String() string {
 	return string(out[:])
 }
 
-// ID() returns the case-sensitive 15-rune form.
-func (id ID) ID() string { return id.string }
-
-// base62 reports whether c is in the Base-62 alphabet (0-9, A-Z, a-z).
-func base62(c byte) bool {
-	return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z'
+// Short returns the case-sensitive 15-rune form. The zero value renders as "000000000000000".
+func (id ID) Short() string {
+	if id.string == "" {
+		return zeroBody
+	}
+	return id.string
 }
 
+// base62 reports whether c is in the Base-62 alphabet (0-9, A-Z, a-z).
+func base62(c byte) bool { return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' }
+
 // suffixIndex returns the position of c in caseRunes, matching letters case-insensitively,
-// or -1 if c is not a valid checksum character (A-Z, 0-5).
+// or -1 if c is not a valid checksum rune (A-Z, 0-5).
 func suffixIndex(c byte) int {
 	switch {
 	case 'A' <= c && c <= 'Z':
@@ -78,7 +98,7 @@ func writeMask(dst []byte, s string) {
 
 // applyMask decodes the case-sensitive 15-rune body of a case-insensitive 18-rune ID.
 // Each suffix rune encodes the capitalization of one 5-rune chunk of the body.
-// Returns false if a suffix rune is outside the checksum alphabet (A-Z, 0-5).
+// Returns false if suffix is bad.
 func applyMask(s string) (string, bool) {
 	var body [15]byte
 	for i := range 3 {
@@ -88,13 +108,16 @@ func applyMask(s string) (string, bool) {
 		}
 		for j := range 5 {
 			c := s[i*5+j]
-			// only apply case shift for non-digits
-			if c >= 'A' {
-				if bits>>j&1 == 1 {
-					c &^= 0x20
-				} else {
-					c |= 0x20
+			set := bits>>j&1 == 1
+			// reject masks that "capitalize digits"
+			if c < 'A' {
+				if set {
+					return "", false
 				}
+			} else if set {
+				c &^= 0x20
+			} else {
+				c |= 0x20
 			}
 			body[i*5+j] = c
 		}

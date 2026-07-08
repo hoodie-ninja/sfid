@@ -8,18 +8,13 @@ import (
 )
 
 func TestValue(t *testing.T) {
-	id, ok := sfid.Parse(testID15)
-	assert.True(t, ok)
-
-	v, err := id.Value()
+	v, err := sfid.MustParse("001A0000006Vm9u").Value()
 	assert.NoError(t, err)
-	assert.Exactly(t, testID18, v)
+	assert.Exactly(t, "001A0000006Vm9uIAC", v)
 
-	// the zero ID cannot be stored.
-	var zero sfid.ID
-	v, err = zero.Value()
-	assert.Error(t, err)
-	assert.Nil(t, v)
+	v, err = sfid.ID{}.Value()
+	assert.NoError(t, err)
+	assert.Exactly(t, "000000000000000AAA", v)
 }
 
 func TestScan(t *testing.T) {
@@ -28,13 +23,13 @@ func TestScan(t *testing.T) {
 		src  any
 		ok   bool
 	}{
-		{"string 15-rune", testID15, true},
-		{"string 18-rune", "001a0000006vm9uiac", true},
-		{"bytes", []byte(testID15), true},
-		{"invalid string bad length", "123", false},
-		{"invalid string bad char", "12345678901234%", false},
-		{"invalid bytes", []byte("nope"), false},
-		{"null", nil, false},
+		{"string 15", "001A0000006Vm9u", true},
+		{"string 18", "001a0000006vm9uiac", true},
+		{"bytes", []byte("001A0000006Vm9u"), true},
+		{"bad length", "123", false},
+		{"bad rune", "12345678901234%", false},
+		{"bad bytes", []byte("nope"), false},
+		{"NULL", nil, false},
 		{"unsupported type", int64(1), false},
 	}
 	for _, tt := range cases {
@@ -43,25 +38,22 @@ func TestScan(t *testing.T) {
 			err := id.Scan(tt.src)
 			if !tt.ok {
 				assert.Error(t, err)
-				assert.Exactly(t, "", id.String(), "id must be unchanged on error")
+				assert.Exactly(t, sfid.ID{}, id, "unchanged on error")
 				return
 			}
 			assert.NoError(t, err)
-			assert.Exactly(t, testID18, id.String())
+			assert.Exactly(t, "001A0000006Vm9uIAC", id.String())
 		})
 	}
 }
 
 func TestValueScanRoundTrip(t *testing.T) {
-	original, ok := sfid.Parse(testID15)
-	assert.True(t, ok)
+	for _, id := range []sfid.ID{sfid.MustParse("001A0000006Vm9u"), {}} {
+		v, err := id.Value()
+		assert.NoError(t, err)
 
-	v, err := original.Value()
-	assert.NoError(t, err)
-
-	var scanned sfid.ID
-	assert.NoError(t, scanned.Scan(v))
-
-	// IDs are directly comparable and must round-trip losslessly.
-	assert.True(t, original == scanned)
+		var got sfid.ID
+		assert.NoError(t, got.Scan(v))
+		assert.Exactly(t, id, got)
+	}
 }
